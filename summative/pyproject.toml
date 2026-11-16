@@ -1,0 +1,4 @@
+[project]
+name = "summative"
+version = "0.1.0"
+description = "Multivariate linear regression on the Africa Rwanda EICV5 VUP farming dataset"
