@@ -8,6 +8,7 @@ Run it:
     python prediction.py
 """
 
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -15,9 +16,12 @@ from typing import Any, Literal
 import joblib
 import pandas as pd
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, create_model
+from sklearn.base import clone
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import train_test_split
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "best_model.pkl"
@@ -204,6 +208,115 @@ app.add_middleware(
 )
 
 
+def _check_columns(frame: pd.DataFrame, state: ModelState) -> tuple[pd.DataFrame, list[str]]:
+    required = state.training_columns
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "status": "rejected",
+                "reason": "columns do not match the training columns",
+                "missing_columns": missing,
+                "expected_columns": required,
+            },
+        )
+    ignored = [str(column) for column in frame.columns if column not in required]
+    return frame.loc[:, required].copy(), ignored
+
+
+def _clean_upload(frame: pd.DataFrame, state: ModelState) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Coerce types, drop unusable rows and report what was dropped."""
+    work, ignored = _check_columns(frame, state)
+    received = len(work)
+
+    for column in state.numeric_columns + [state.target]:
+        work[column] = pd.to_numeric(work[column], errors="coerce")
+
+    blanks = 0
+    for column in state.categorical_columns:
+        stripped = work[column].astype("string").str.strip()
+        blanks += int((stripped == "").sum())
+        work[column] = stripped.mask(stripped == "", pd.NA)
+
+    before = len(work)
+    work = work.dropna(subset=state.training_columns)
+    missing_rows = before - len(work)
+
+    non_positive = int((work[state.target] <= 0).sum())
+    work = work.loc[work[state.target] > 0]
+
+    cap = float(state.metadata.get("target_cap") or work[state.target].max())
+    clipped = int((work[state.target] > cap).sum())
+    work[state.target] = work[state.target].clip(upper=cap)
+
+    report = {
+        "rows_received": received,
+        "rows_used_after_cleaning": len(work),
+        "rows_dropped": received - len(work),
+        "dropped_reasons": {
+            "missing_or_non_numeric": missing_rows,
+            "blank_categories": blanks,
+            "non_positive_target": non_positive,
+        },
+        "adjusted": {"rows_clipped_to_target_cap": clipped},
+        "ignored_columns": ignored,
+    }
+    return work.reset_index(drop=True), report
+
+
+def _partial_fit(state: ModelState, new_rows: pd.DataFrame) -> dict[str, Any]:
+    """SGD path: reuse the fitted preprocessor and call partial_fit."""
+    preprocessor = state.pipeline.named_steps["prep"]
+    model = state.pipeline.named_steps["model"]
+
+    features = preprocessor.transform(new_rows[state.input_columns])
+    try:
+        model.partial_fit(features, new_rows[state.target].to_numpy(dtype=float))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"partial_fit is not available for the loaded model: {exc}",
+        ) from exc
+
+    holdout = state.training_frame.sample(frac=HOLDOUT_FRACTION, random_state=RANDOM_STATE)
+    predictions = model.predict(preprocessor.transform(holdout[state.input_columns]))
+    return {
+        "pipeline": state.pipeline,
+        "model_name": type(model).__name__,
+        "strategy": "partial_fit",
+        "rows_used": len(state.training_frame) + len(new_rows),
+        "holdout_mse": float(mean_squared_error(holdout[state.target], predictions)),
+    }
+
+
+def _refit(state: ModelState, new_rows: pd.DataFrame) -> dict[str, Any]:
+    """Other models: refit on the stored cleaned data plus the new rows."""
+    combined = pd.concat(
+        [state.training_frame[state.training_columns], new_rows], ignore_index=True
+    )
+    features = combined[state.input_columns]
+    cap = float(state.metadata.get("target_cap") or combined[state.target].max())
+    target = combined[state.target].clip(upper=cap)
+    combined = combined.assign(**{state.target: target})
+
+    x_train, x_test, y_train, y_test = train_test_split(
+        features, target, test_size=HOLDOUT_FRACTION, random_state=RANDOM_STATE
+    )
+    scored = clone(state.pipeline).fit(x_train, y_train)
+    holdout_mse = float(mean_squared_error(y_test, scored.predict(x_test)))
+
+    final = clone(state.pipeline).fit(features, target)
+    state.training_frame = combined
+    return {
+        "pipeline": final,
+        "model_name": type(final.named_steps["model"]).__name__,
+        "strategy": "refit",
+        "rows_used": len(combined),
+        "holdout_mse": holdout_mse,
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -243,6 +356,50 @@ def predict(payload: PredictionRequest) -> dict[str, Any]:
     return {
         "predicted_quantity": round(max(prediction, 0.0), 2),
         "model_name": STATE.model_name,
+    }
+
+
+@app.post("/retrain")
+async def retrain(file: UploadFile = File(...)) -> dict[str, Any]:
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
+
+    try:
+        uploaded = pd.read_csv(io.BytesIO(contents))
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Could not parse the CSV: {exc}") from exc
+
+    prepared, report = _clean_upload(uploaded, STATE)
+    if prepared.empty:
+        raise HTTPException(
+            status_code=422,
+            detail={"status": "rejected", "reason": "no usable rows after cleaning", **report},
+        )
+
+    if STATE.model_name == "SGDRegressor":
+        outcome = _partial_fit(STATE, prepared)
+    else:
+        outcome = _refit(STATE, prepared)
+
+    STATE.pipeline = outcome["pipeline"]
+    STATE.metadata["model_name"] = outcome["model_name"]
+    STATE.metadata.setdefault("metrics", {})[outcome["model_name"]] = {
+        "test_mse": round(outcome["holdout_mse"], 2),
+        "trained_rows": outcome["rows_used"],
+        "source": "retrain",
+    }
+    joblib.dump({"pipeline": STATE.pipeline, "metadata": STATE.metadata}, MODEL_PATH)
+
+    return {
+        "status": "retrained",
+        "strategy": outcome["strategy"],
+        "model_name": outcome["model_name"],
+        "rows_used": outcome["rows_used"],
+        "new_rows_used": len(prepared),
+        "holdout_mse": round(outcome["holdout_mse"], 2),
+        "saved_to": MODEL_PATH.name,
+        **report,
     }
 
 
