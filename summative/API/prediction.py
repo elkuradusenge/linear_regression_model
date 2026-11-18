@@ -16,6 +16,7 @@ import joblib
 import pandas as pd
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -180,6 +181,28 @@ app = FastAPI(
     version="3.0.0",
     description=f"{STATE.model_name} predicting {STATE.target}, with online retraining.",
 )
+
+# CORS, because the Flutter web build calls this API from the browser and the browser
+# blocks cross-origin calls unless the API opts in. Allowed: GET and POST from the two
+# origins listed below, carrying only a Content-Type header. Restricted: no wildcard
+# origin, so random sites cannot read responses; no PUT/PATCH/DELETE; no custom
+# headers; and credentials off because this API sets no cookies and has no login.
+# A native Flutter build on Android or iOS is not affected by CORS at all, since CORS
+# is enforced by browsers, not by the phone: the mobile app can call this API from any
+# origin. Only the web build needs these entries.
+ALLOWED_ORIGINS = [
+    "https://REPLACE-WITH-YOUR-RENDER-SERVICE.onrender.com",  # deployed API on Render
+    "http://localhost:8080",  # Flutter web debug server
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+    allow_credentials=False,
+)
+
 
 @app.get("/health")
 def health() -> dict[str, Any]:
