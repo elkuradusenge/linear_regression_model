@@ -201,8 +201,271 @@ String formatBound(dynamic value) {
   return value?.toString() ?? '';
 }
 
-void main() => runApp(
-  const MaterialApp(
-    home: Scaffold(body: Center(child: Text('Field definitions ready.'))),
-  ),
-);
+/// ---------------------------------------------------------------------------
+/// Reusable field widget.
+/// ---------------------------------------------------------------------------
+
+class FieldInput extends StatelessWidget {
+  const FieldInput({
+    super.key,
+    required this.spec,
+    required this.controller,
+    required this.enabled,
+  });
+
+  final FieldSpec spec;
+  final TextEditingController controller;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        enabled: enabled,
+        keyboardType: spec.keyboardType,
+        textInputAction: TextInputAction.next,
+        decoration: InputDecoration(
+          labelText: spec.label,
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+      ),
+    );
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// The page.
+/// ---------------------------------------------------------------------------
+
+void main() => runApp(const PredictorApp());
+
+class PredictorApp extends StatelessWidget {
+  const PredictorApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Food production predictor',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        useMaterial3: true,
+      ),
+      home: const PredictionPage(),
+    );
+  }
+}
+
+class PredictionPage extends StatefulWidget {
+  const PredictionPage({super.key});
+
+  @override
+  State<PredictionPage> createState() => _PredictionPageState();
+}
+
+class _PredictionPageState extends State<PredictionPage> {
+  /// One controller per model input, keyed by JSON key.
+  final Map<String, TextEditingController> _controllers =
+      <String, TextEditingController>{
+        for (final FieldSpec spec in fieldSpecs)
+          spec.jsonKey: TextEditingController(),
+      };
+
+  bool _busy = false;
+  double? _prediction;
+  List<String> _messages = <String>[];
+
+  @override
+  void dispose() {
+    for (final TextEditingController controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  /// Builds the JSON body, converting numeric fields and collecting empty ones.
+  Map<String, dynamic>? _buildPayload(List<String> problems) {
+    final Map<String, dynamic> payload = <String, dynamic>{};
+
+    for (final FieldSpec spec in fieldSpecs) {
+      final String raw = _controllers[spec.jsonKey]!.text.trim();
+
+      if (raw.isEmpty) {
+        problems.add('${spec.label} is required.');
+        continue;
+      }
+
+      if (!spec.isNumeric) {
+        payload[spec.jsonKey] = raw;
+        continue;
+      }
+
+      final double? parsed = double.tryParse(raw);
+      if (parsed == null) {
+        problems.add('${spec.label} must be a number.');
+        continue;
+      }
+
+      if (spec.kind == FieldKind.integer) {
+        if (parsed != parsed.roundToDouble()) {
+          problems.add('${spec.label} must be a whole number.');
+          continue;
+        }
+        payload[spec.jsonKey] = parsed.toInt();
+      } else {
+        payload[spec.jsonKey] = parsed;
+      }
+    }
+
+    return problems.isEmpty ? payload : null;
+  }
+
+  Future<void> _predict() async {
+    final List<String> problems = <String>[];
+    final Map<String, dynamic>? payload = _buildPayload(problems);
+
+    if (payload == null) {
+      setState(() {
+        _busy = false;
+        _prediction = null;
+        _messages = problems;
+      });
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _prediction = null;
+      _messages = <String>[];
+    });
+
+    final PredictionResult result = await requestPrediction(payload);
+
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _prediction = result.prediction;
+      _messages = result.messages;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Food production predictor')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  'The free Render service can take up to a minute to wake. '
+                  'The first prediction may be slow; later ones are quick.',
+                ),
+              ),
+              const SizedBox(height: 16),
+              for (final FieldSpec spec in fieldSpecs)
+                FieldInput(
+                  spec: spec,
+                  controller: _controllers[spec.jsonKey]!,
+                  enabled: !_busy,
+                ),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _busy ? null : _predict,
+                  child: Text(_busy ? 'Predicting...' : 'Predict'),
+                ),
+              ),
+              const SizedBox(height: 20),
+              _buildDisplayArea(context),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDisplayArea(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    if (_busy) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.dividerColor),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Row(
+          children: <Widget>[
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Contacting the API. If the service has gone to sleep this can '
+                'take up to a minute.',
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final List<Widget> lines = <Widget>[];
+    if (_prediction != null) {
+      lines.add(
+        Text(
+          'Predicted quantity: ${_prediction!.toStringAsFixed(2)}',
+          style: theme.textTheme.titleMedium,
+        ),
+      );
+    }
+    for (final String message in _messages) {
+      lines.add(
+        Padding(
+          padding: EdgeInsets.only(top: lines.isEmpty ? 0 : 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Icon(Icons.error_outline, size: 18, color: Colors.red),
+              const SizedBox(width: 8),
+              Expanded(child: Text(message)),
+            ],
+          ),
+        ),
+      );
+    }
+    if (lines.isEmpty) {
+      lines.add(const Text('Fill in every field, then press Predict.'));
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.dividerColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: lines,
+      ),
+    );
+  }
+}
