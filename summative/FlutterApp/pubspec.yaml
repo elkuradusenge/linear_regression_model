@@ -1,5 +1,5 @@
 name: flutter_app
-description: "A new Flutter project."
+description: "One-page Android app for the Rwanda food price estimator."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -30,15 +30,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  material_ui: ^1.1.0
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
+  # The only package this app uses: HTTP to the prediction API.
   http: ^1.6.0
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # Ships with the Flutter SDK; used only to drive the app on an emulator.
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
