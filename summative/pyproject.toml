@@ -4,16 +4,21 @@ version = "0.1.0"
 description = "Multivariate linear regression on the Africa Rwanda EICV5 VUP farming dataset"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "pandas",
-    "numpy",
-    "scikit-learn",
-    "matplotlib",
-    "seaborn",
-    "joblib",
     "fastapi",
     "uvicorn",
+    "pandas",
+    "scikit-learn",
+    "joblib",
     "pydantic",
     "python-multipart",
+]
+
+[project.optional-dependencies]
+# Notebook-only tooling. The API deployment exports the default dependencies only,
+# so install these with `uv sync --extra notebook` before running multivariate.ipynb.
+notebook = [
+    "matplotlib",
+    "seaborn",
     "datasets",
     "pyarrow",
     "nbformat",

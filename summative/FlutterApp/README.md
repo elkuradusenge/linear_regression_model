@@ -1,17 +1,12 @@
-# flutter_app
+# Food Price Estimator (Android)
 
-A new Flutter project.
+One page, five inputs, one price in RWF. The form is rendered from
+`lib/generated/form_schema.dart`, which `linear_regression/multivariate.ipynb` writes from the model
+metadata. Do not edit that file by hand.
 
-## Getting Started
+Run:
 
-This project is a starting point for a Flutter application.
+    flutter pub get
+    flutter run --dart-define=API_URL=https://linear-regression-model-ycsw.onrender.com
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Setup, the API contract and the end-to-end test steps live in the project README one level up.

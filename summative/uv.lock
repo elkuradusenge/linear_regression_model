@@ -1740,39 +1740,42 @@ name = "summative"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "datasets" },
     { name = "fastapi" },
     { name = "joblib" },
-    { name = "jupyter" },
-    { name = "matplotlib" },
-    { name = "nbformat" },
-    { name = "numpy" },
     { name = "pandas" },
-    { name = "pyarrow" },
     { name = "pydantic" },
     { name = "python-multipart" },
     { name = "scikit-learn" },
-    { name = "seaborn" },
     { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+notebook = [
+    { name = "datasets" },
+    { name = "jupyter" },
+    { name = "matplotlib" },
+    { name = "nbformat" },
+    { name = "pyarrow" },
+    { name = "seaborn" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "datasets" },
+    { name = "datasets", marker = "extra == 'notebook'" },
     { name = "fastapi" },
     { name = "joblib" },
-    { name = "jupyter" },
-    { name = "matplotlib" },
-    { name = "nbformat" },
-    { name = "numpy" },
+    { name = "jupyter", marker = "extra == 'notebook'" },
+    { name = "matplotlib", marker = "extra == 'notebook'" },
+    { name = "nbformat", marker = "extra == 'notebook'" },
     { name = "pandas" },
-    { name = "pyarrow" },
+    { name = "pyarrow", marker = "extra == 'notebook'" },
     { name = "pydantic" },
     { name = "python-multipart" },
     { name = "scikit-learn" },
-    { name = "seaborn" },
+    { name = "seaborn", marker = "extra == 'notebook'" },
     { name = "uvicorn" },
 ]
+provides-extras = ["notebook"]
 
 [[package]]
 name = "terminado"
