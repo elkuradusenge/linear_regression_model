@@ -90,8 +90,11 @@ def build_state(
 ) -> ModelState:
     """Wrap a pipeline, its metadata and its training rows in one immutable state object."""
     frame = train_frame.loc[:, list(metadata["input_columns"]) + [metadata["target"]]].copy()
+    # Plain objects, so the bundle never carries Arrow extension dtypes into a
+    # deployment that does not install pyarrow.
     for column in metadata["categorical_columns"]:
-        frame[column] = frame[column].astype(str)
+        frame[column] = frame[column].astype(object)
+    frame.columns = pd.Index(frame.columns.tolist(), dtype=object)
     return ModelState(
         pipeline=pipeline,
         metadata=metadata,
@@ -318,7 +321,7 @@ def prepare_upload(frame: pd.DataFrame, state: ModelState) -> tuple[pd.DataFrame
     unknown = pd.Series(False, index=work.index)
     for column in state.categorical_columns:
         text = work[column].astype("string").str.strip()
-        work[column] = text
+        work[column] = text.astype(object)
         unknown |= ~text.isin(state.metadata["allowed_values"][column])
 
     bad_month = month.isna() | (month < 1) | (month > 12) | (month % 1 != 0)

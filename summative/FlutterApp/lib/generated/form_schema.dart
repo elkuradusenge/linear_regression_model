@@ -211,7 +211,7 @@ const List<FieldSpec> fieldSpecs = <FieldSpec>[
     key: 'month',
     label: 'Month',
     kind: FieldKind.month,
-    values: const <String>[],
+    values: <String>[],
     minValue: monthMin,
     maxValue: monthMax,
   ),
