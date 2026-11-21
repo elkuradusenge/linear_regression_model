@@ -18,7 +18,7 @@ The service sleeps when idle, so the first request can take up to a minute.
 
 ## 4. YouTube demo
 
-[YouTube demo](https://youtu.be/<your-demo-id>)
+[YouTube demo](https://youtu.be/mqDZCc8FZDc)
 
 ## 5. Run the mobile app
 
